@@ -1,0 +1,80 @@
+# Harper MLS Listings — schema
+#
+# One schema replaces five services: structured filters, geo, vector search,
+# blob media, and relationships all live in these three tables.
+#
+# Field names map onto the RESO Data Dictionary so the model reads like a real
+# MLS feed rather than a toy.
+
+"""
+A single property listing. `@table` (not `@export`) because we extend it in
+resources/Listing.ts to generate the geohash + embedding on write — the
+extended class provides the same automatic REST/WebSocket surface at /Listing.
+"""
+type Listing @table {
+	id: ID @primaryKey
+
+	# --- MLS core (all indexed for structured filtering) ---
+	mlsId: String @indexed
+	status: String @indexed # active | pending | sold | withdrawn
+	listPrice: Int @indexed
+	beds: Int @indexed
+	baths: Float @indexed
+	sqft: Int @indexed
+	propertyType: String @indexed # single-family | condo | townhouse | multi-family
+	yearBuilt: Int
+
+	# --- Location ---
+	addressLine: String
+	city: String @indexed
+	state: String @indexed
+	zip: String @indexed
+	lat: Float @indexed
+	lng: Float @indexed
+	# Derived from lat/lng in resources/Listing.ts. Indexed so proximity becomes a
+	# cheap prefix/IN lookup. `version` bumps force recomputation of the resolver.
+	geohash: String @indexed @computed(version: 1)
+
+	# --- Content ---
+	description: String
+	features: [String] @indexed # array index: match a listing by ANY feature value
+	# HNSW vector index — semantic search with no pgvector/Pinecone. Populated on
+	# write from description + features (see resources/Listing.ts).
+	embedding: [Float] @indexed(type: "HNSW", distance: "cosine")
+
+	# --- Media (native blobs, no S3) ---
+	heroPhoto: Blob
+	photos: [Blob]
+
+	# --- Relationships ---
+	agentId: ID @indexed
+	listingAgent: Agent @relationship(from: "agentId")
+
+	createdTime: Long @createdTime
+	updatedTime: Long @updatedTime
+}
+
+"""
+A listing agent. Exported directly — the auto REST API is all it needs.
+"""
+type Agent @table @export {
+	id: ID @primaryKey
+	name: String @indexed
+	brokerage: String @indexed
+	email: String
+	phone: String
+	listings: [Listing] @relationship(to: "agentId")
+}
+
+"""
+A buyer's saved search. `criteria` is the serialized filter used to drive the
+real-time alerts stream (resources/SavedSearchAlerts.ts). `@table` (not
+`@export`) because SavedSearchAlerts is the intended interface.
+"""
+type SavedSearch @table @export {
+	id: ID @primaryKey
+	userId: ID @indexed
+	label: String
+	criteria: Any # { minPrice, maxPrice, beds, city, propertyType, ... }
+	createdTime: Long @createdTime
+}
