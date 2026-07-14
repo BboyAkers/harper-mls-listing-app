@@ -41,3 +41,4 @@ jsResource:
 # requests to your resources.
 static:
   files: 'dist/**'
+  urlPath: '/mls'
